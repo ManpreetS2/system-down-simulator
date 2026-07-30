@@ -4,7 +4,6 @@ An interactive incident-response strategy game where you play as the on-call eng
 
 I built System Down as a portfolio project to combine product design, React/TypeScript engineering, and real-world reliability concepts into a polished browser experience — part operations dashboard, part decision-based strategy game.
 
-**Live demo:** _Coming soon — add your deployment URL here_
 
 ---
 
