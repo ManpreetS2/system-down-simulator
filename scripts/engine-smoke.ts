@@ -3,8 +3,9 @@
  * Verifies: timeout resolution, game-over conditions, reducer guards
  * (duplicate actions are no-ops), and full-shift completion.
  */
+import { DIFFICULTIES } from '../src/data/difficulty';
 import { INCIDENTS } from '../src/data/incidents';
-import { initialState, reducer } from '../src/game/engine';
+import { initialState, MAX_DRAIN_DT_SEC, reducer } from '../src/game/engine';
 import type { GameState } from '../src/types';
 
 let failures = 0;
@@ -110,6 +111,35 @@ now += 1000;
 s = reducer(s, { type: 'CHOOSE', actionId: 'rollback', roll: 0.5, now });
 assert(s.lastResult?.delayedLanded.length === 1, 'delayed consequence lands on next resolution');
 assert(s.pendingDelayed.length === 0, 'delayed queue drains');
+
+// --- Scenario 4: suspended-tab catch-up is capped; absolute timeout still works ---
+console.log('Scenario 4: elapsed-time drain cap and absolute timeout');
+now = 4_000_000;
+s = reducer(initialState('junior'), {
+  type: 'START',
+  difficulty: 'junior',
+  queue: ['memory-leak'],
+  now,
+});
+const healthBeforeJump = s.metrics.health;
+const trustBeforeJump = s.metrics.trust;
+now += 30_000; // simulate a 30s tab suspension between ticks
+s = reducer(s, { type: 'TICK', now });
+const healthDrop = healthBeforeJump - s.metrics.health;
+const trustDrop = trustBeforeJump - s.metrics.trust;
+const incident = INCIDENTS.find((i) => i.id === 'memory-leak')!;
+const mult = DIFFICULTIES.junior.consequenceMult;
+const maxHealthDrop = incident.healthDrainPerSec * MAX_DRAIN_DT_SEC * mult + 0.0001;
+const maxTrustDrop = incident.trustDrainPerSec * MAX_DRAIN_DT_SEC * mult + 0.0001;
+assert(healthDrop <= maxHealthDrop, `health drain capped after long gap (${healthDrop.toFixed(4)} <= ${maxHealthDrop.toFixed(4)})`);
+assert(trustDrop <= maxTrustDrop, `trust drain capped after long gap (${trustDrop.toFixed(4)} <= ${maxTrustDrop.toFixed(4)})`);
+assert(Math.abs(s.shiftElapsedSec - 30) < 0.001, 'wall-clock shift elapsed still advances by 30s');
+
+// Jump past the incident deadline in one tick — timeout must still apply.
+now = s.incidentDeadline! + 1;
+s = reducer(s, { type: 'TICK', now });
+assert(s.phase === 'result', 'absolute deadline still times out after a large jump');
+assert(s.lastResult?.record.timedOut === true, 'timeout after large jump is marked timed out');
 
 console.log(failures === 0 ? '\nALL ENGINE CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

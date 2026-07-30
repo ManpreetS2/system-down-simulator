@@ -1,11 +1,28 @@
 # System Down
 
+[![CI](https://github.com/ManpreetS2/system-down-simulator/actions/workflows/ci.yml/badge.svg)](https://github.com/ManpreetS2/system-down-simulator/actions/workflows/ci.yml)
+[![Deploy GitHub Pages](https://github.com/ManpreetS2/system-down-simulator/actions/workflows/deploy-pages.yml/badge.svg)](https://github.com/ManpreetS2/system-down-simulator/actions/workflows/deploy-pages.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 An interactive incident-response strategy game where you play as the on-call engineer for a growing software company. Realistic infrastructure incidents appear one at a time, and every decision forces a trade-off between system health, company revenue, customer trust, engineering budget, and response time.
+
+**[Play the live demo](https://manpreets2.github.io/system-down-simulator/)**
 
 I built System Down as a portfolio project to combine product design, React/TypeScript engineering, and real-world reliability concepts into a polished browser experience — part operations dashboard, part decision-based strategy game.
 
+## Screenshots
 
----
+### Start your on-call shift
+
+![System Down start screen showing branding, difficulty selection for Junior Engineer and Senior, How to Play, and achievements](docs/screenshots/start-screen.png)
+
+### Diagnose and respond to live incidents
+
+![Operations dashboard with live company metrics, an active SEV1 incident alert, four response options, and infrastructure telemetry](docs/screenshots/incident-dashboard.png)
+
+### Review the final incident postmortem
+
+![End-of-shift postmortem with grade, final score, decision timeline, notable calls, and personalized recommendations](docs/screenshots/postmortem.png)
 
 ## Overview
 
@@ -13,7 +30,21 @@ In System Down, you work a full on-call shift. Incidents page in with severity l
 
 The game is designed to be understandable to nontechnical players while still using realistic cloud, DevOps, reliability, and incident-management language.
 
-## Gameplay Concept
+## Key Features
+
+- **12 realistic incidents** covering failed deploys, database overload, payment outages, expired SSL, traffic spikes, memory leaks, cache invalidation, regional cloud outages, credential exposure, rate-limit storms, corrupted config, and DDoS floods
+- **Four actions per incident** with risk labels, remediation time, and probabilistic outcomes
+- **Delayed consequences** on some choices that surface later in the shift
+- **Live operations dashboard** for company and infrastructure metrics
+- **Countdown pressure** with continuous metric drains while an incident is unresolved
+- **Learning-oriented feedback** after every decision
+- **Three difficulty levels** that change timers, resources, consequence severity, and shift length
+- **End-of-shift postmortem** with grade (F–S), rank, accuracy, timeline, and recommendations
+- **Achievements and high score** saved in `localStorage`
+- **Responsive layout** and keyboard shortcuts
+- **No backend** — the entire game runs in the browser
+
+## Gameplay Flow
 
 1. Select a difficulty and start your shift.
 2. Read the alert and symptoms for the active incident.
@@ -24,20 +55,21 @@ The game is designed to be understandable to nontechnical players while still us
 
 If the timer runs out with no response, a failure consequence is applied automatically. One poor decision is rarely fatal — recovery between incidents is intentional — but health, trust, or budget at zero ends the shift early.
 
-## Key Features
+### Difficulty Levels
 
-- **12 realistic incidents**, including failed production deployments, database overload, payment provider outages, expired SSL certificates, traffic spikes, memory leaks, bad cache invalidation, regional cloud outages, credential exposure, API rate-limit storms, corrupted deployment config, and denial-of-service floods
-- **Four actions per incident**, each with risk level, remediation time, and probabilistic success or failure outcomes
-- **Delayed consequences** on some choices that surface later in the shift
-- **Live operations dashboard** with company metrics (health, trust, revenue, budget, active users, revenue loss rate) and infrastructure telemetry (CPU, memory, DB latency, error rate, request volume, uptime)
-- **Countdown pressure** with continuous metric drains while an incident remains unresolved
-- **Learning-oriented feedback** after every decision — what happened, why, and what an experienced responder might do
-- **Three difficulty levels** that change timers, starting resources, consequence severity, and shift length
-- **End-of-shift postmortem** with grade (F–S), rank (Intern → Principal Engineer), accuracy, response time, revenue saved/lost, strongest and most damaging calls, timeline, and recommendations
-- **Achievements**, high score, sound preference, and last difficulty saved in `localStorage`
-- **Responsive layout** for desktop, tablet, and mobile
-- **Keyboard shortcuts** for fast response during incidents
-- **No backend** — the entire game runs locally in the browser
+| Difficulty | Shift length | Timer | Pressure |
+| --- | --- | --- | --- |
+| Junior | 6 incidents | Longer | Softer consequences, more starting budget |
+| Engineer | 8 incidents | Balanced | Default balance |
+| Senior | 10 incidents | Shorter | Harsher consequences, tighter resources |
+
+### Keyboard Controls
+
+| Key | Action |
+| --- | --- |
+| `1` – `4` | Select response 1–4 during an active incident |
+| `Enter` | Continue after a result panel |
+| Mouse / touch | Full navigation and all buttons |
 
 ## Technologies
 
@@ -48,11 +80,31 @@ If the timer runs out with no response, a failure consequence is applied automat
 | Build tooling | Vite |
 | Icons | Lucide React |
 | Styling | Custom CSS design system |
-| Charts | Lightweight SVG sparklines (no charting library) |
+| Charts | Lightweight SVG sparklines |
 | Persistence | Browser `localStorage` |
-| Audio | Web Audio API (synthesized tones, no audio files) |
+| Audio | Web Audio API (synthesized tones) |
+| CI / hosting | GitHub Actions + GitHub Pages |
 
 There is no server, database, authentication, or third-party API dependency.
+
+## Architecture
+
+```
+src/
+  data/           # Incidents, difficulty configs, achievements
+  game/           # Reducer engine, report/grading, React hook
+  components/     # Start screen, dashboard, result, postmortem
+  utils/          # Formatting, localStorage, synthesized sound
+  types.ts        # Shared TypeScript models
+  index.css       # Design system and responsive layout
+scripts/
+  engine-smoke.ts # Deterministic engine checks
+.github/workflows/
+  ci.yml          # Typecheck, engine test, production build
+  deploy-pages.yml# GitHub Pages deployment
+```
+
+Gameplay content stays in data files. Components render state; the reducer in `src/game/engine.ts` owns timers, metric drains, resolution, delayed consequences, and win/lose conditions.
 
 ## Installation
 
@@ -62,95 +114,36 @@ cd system-down-simulator
 npm install
 ```
 
-## Local Development
+## Development
 
 ```bash
-npm run dev
+npm run dev          # Vite dev server (http://localhost:5173)
+npm run typecheck    # TypeScript check
+npm run test:engine  # Deterministic engine smoke test
+npm run build        # Production build (base path /)
+npm run build:pages  # GitHub Pages build (base path /system-down-simulator/)
+npm run preview      # Preview the production build locally
 ```
 
-Open the URL Vite prints (typically `http://localhost:5173`).
+## Live Demo
 
-## Production Build
+Play here: [https://manpreets2.github.io/system-down-simulator/](https://manpreets2.github.io/system-down-simulator/)
 
-```bash
-npm run build
-npm run preview
-```
+## Design Decisions
 
-`npm run build` type-checks with TypeScript and writes a production bundle to `dist/`.
-
-Optional deterministic engine smoke test:
-
-```bash
-npx tsx scripts/engine-smoke.ts
-```
-
-## Gameplay Instructions
-
-1. On the start screen, pick **Junior**, **Engineer**, or **Senior**.
-2. Review **How to Play** if you are new.
-3. Click **Start Shift**.
-4. When an incident appears, read the severity, alert, and symptoms.
-5. Choose a response (or press `1`–`4`).
-6. Read the result panel, then continue to the next incident.
-7. After the shift, review the postmortem, restart, or return home.
-
-### Keyboard Controls
-
-| Key | Action |
-| --- | --- |
-| `1` – `4` | Select response 1–4 during an active incident |
-| `Enter` | Continue after a result panel |
-| Mouse / touch | Full navigation and all buttons |
-
-### Difficulty Levels
-
-| Difficulty | Shift length | Timer | Pressure |
-| --- | --- | --- | --- |
-| Junior | 6 incidents | Longer | Softer consequences, more starting budget |
-| Engineer | 8 incidents | Balanced | Default balance |
-| Senior | 10 incidents | Shorter | Harsher consequences, tighter resources |
-
-## Incident-Response Learning Elements
-
-System Down is intentionally educational as well as playable:
-
-- Correct answers are not always obvious — fast options can be risky; safe options can be slow or expensive
-- Result panels explain why a choice worked or failed in plain language
-- Each incident includes a recommended experienced-responder approach
-- Postmortem recommendations adapt to timeouts, risky play, spend, trust dips, and response speed
-- Scenarios cover deployment, databases, security, traffic, third-party vendors, and configuration
-
-## Project Architecture
-
-```
-src/
-  data/           # Incidents, difficulty configs, achievements (structured content)
-  game/           # Reducer engine, report/grading, React hook wiring
-  components/     # Start screen, dashboard, incident/result panels, postmortem
-  utils/          # Formatting, localStorage helpers, synthesized sound
-  types.ts        # Shared TypeScript models
-  index.css       # Design system and responsive layout
-scripts/
-  engine-smoke.ts # Deterministic engine checks (timeouts, game-over, delays)
-```
-
-Gameplay content stays in data files. Components render state; the reducer in `src/game/engine.ts` owns timers, metric drains, resolution, delayed consequences, and win/lose conditions. That separation made balancing and adding incidents much easier than burying outcomes inside UI code.
+- **Balancing difficulty:** One bad call should sting without always ending the run. Between-incident recovery and difficulty multipliers keep Junior teachable and Senior punishing.
+- **Ambiguous choices:** Each incident has a best-practice path, but high-risk shortcuts sometimes succeed — closer to real incident trade-offs than a labeled quiz.
+- **Dashboard feel without noise:** Metrics and infra values stay alive with restrained motion so the UI still reads as a professional command center.
+- **Client-only persistence:** High score, achievements, sound, and difficulty use `localStorage` only.
+- **Elapsed-time drains with a cap:** Tick drains use real elapsed time so throttled timers stay honest, but a suspended tab cannot dump minutes of damage into one catch-up frame. Absolute incident deadlines still timeout correctly.
 
 ## What I Learned
 
-- Modeling a full game loop as a single reducer with explicit phases (`idle` → `incident` → `result` → `over`) keeps timing, scoring, and UI state consistent
+- Modeling a full game loop as a reducer with explicit phases keeps timing, scoring, and UI state consistent
 - Separating incident content from presentation makes balancing and content expansion practical
-- Probabilistic outcomes and delayed consequences create replayability without needing a backend
-- Building a custom dark operations-center UI required careful hierarchy, severity communication beyond color alone, and responsive stacking instead of shrinking desktop panels
-- Cleaning up intervals and guarding against duplicate actions is essential once real-time drains and timers are involved
-
-## Challenges and Design Decisions
-
-- **Balancing difficulty:** One bad call should sting without always ending the run. Between-incident recovery and difficulty multipliers were tuned so Junior feels teachable and Senior feels punishing.
-- **Ambiguous choices:** Each incident has a “best practice” path, but high-risk shortcuts sometimes succeed. That mirrors real incident trade-offs without making the right answer a label.
-- **Dashboard feel without noise:** Metrics animate and infra values drift, but transitions stay restrained so the interface still reads as a professional command center.
-- **Client-only persistence:** High score, achievements, sound, and difficulty use `localStorage` only — enough for portfolio use without accounts or keys.
+- Probabilistic outcomes and delayed consequences create replayability without a backend
+- Accessibility and hierarchy matter as much as color when communicating severity
+- Cleaning up intervals and guarding against duplicate actions is essential once real-time drains are involved
 
 ## Future Improvements
 
@@ -160,7 +153,6 @@ Gameplay content stays in data files. Components render state; the reducer in `s
 - Mid-shift resource spends (contractors, monitoring upgrades)
 - Color-blind palette audit and localization
 - Markdown export of the shift timeline as a postmortem draft
-- Hosted live demo with screenshot assets in the README
 
 ## Author
 

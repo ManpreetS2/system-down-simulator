@@ -37,6 +37,7 @@ Desktop.ini
 
 # Editor / IDE (local)
 .idea/
+.cursor/
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json.example

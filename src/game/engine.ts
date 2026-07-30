@@ -22,6 +22,14 @@ export const INFRA_BASELINE: InfraState = {
   uptimePct: 100,
 };
 
+/**
+ * Maximum simulated seconds applied to drains in a single TICK.
+ * Wall-clock display and absolute deadlines still use the real timestamp, so
+ * a suspended tab can time out correctly without dumping minutes of drain
+ * into one catch-up frame.
+ */
+export const MAX_DRAIN_DT_SEC = 0.5;
+
 export type GameAction =
   | { type: 'START'; difficulty: DifficultyId; queue: string[]; now: number }
   | { type: 'TICK'; now: number }
@@ -254,13 +262,14 @@ export function reducer(state: GameState, action: GameAction): GameState {
       if (state.phase !== 'incident' && state.phase !== 'result') return state;
       const config = DIFFICULTIES[state.difficulty];
       const incident = state.phase === 'incident' ? currentIncident(state) : null;
-      const dt = 0.25; // ticker period in seconds
-      const shiftElapsedSec = (action.now - state.shiftStartedAt) / 1000;
+      const shiftElapsedSec = Math.max(0, (action.now - state.shiftStartedAt) / 1000);
+      const rawDt = Math.max(0, shiftElapsedSec - state.shiftElapsedSec);
+      const dt = Math.min(rawDt, MAX_DRAIN_DT_SEC);
 
       let downtimeSec = state.downtimeSec;
       let metrics = state.metrics;
 
-      if (incident) {
+      if (incident && dt > 0) {
         const mult = config.consequenceMult;
         const revenueBleed = (incident.revenueLossPerMin / 60) * dt * mult;
         metrics = {
