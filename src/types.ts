@@ -97,6 +97,16 @@ export interface DifficultyConfig {
   /** Passive health/trust recovery between incidents. */
   recoveryHealth: number;
   recoveryTrust: number;
+  /** Show junior-friendly indicator explanations / glossary. */
+  showGlossary: boolean;
+  /** Show risk badges on multiple-choice actions. */
+  showRiskLabels: boolean;
+  /** Require at least this many investigations before MC unlocks. */
+  minInvestigationsBeforeActions: number;
+  /** Allow typed open-response remediation. */
+  allowOpenResponse: boolean;
+  /** Highlight the most relevant investigation source. */
+  highlightRelevantEvidence: boolean;
 }
 
 export interface Metrics {
@@ -140,6 +150,9 @@ export interface DecisionRecord {
   totalRevenueDelta: number;
   effects: Effects;
   explanation: string;
+  /** How the player responded: multiple choice, open text, or timeout. */
+  responseMode: 'choice' | 'open' | 'timeout';
+  investigationsUsed: number;
 }
 
 export interface ResolvedResult {
@@ -153,6 +166,25 @@ export interface ResolvedResult {
 }
 
 export type Phase = 'idle' | 'incident' | 'result' | 'over';
+
+export type ScenarioPhase = 'triage' | 'investigating' | 'ready';
+
+export interface RevealedEvidence {
+  id: string;
+  kind: 'confirmed' | 'indicator' | 'assumption' | 'unknown';
+  text: string;
+  glossary?: string;
+  sourceLabel: string;
+}
+
+export interface PendingOpenResponse {
+  rawText: string;
+  interpreted: string;
+  explanation: string;
+  confidence: number;
+  suggestedActionIds: string[];
+  clarificationPrompt: string | null;
+}
 
 export interface GameState {
   phase: Phase;
@@ -177,6 +209,15 @@ export interface GameState {
   gameOverReason: string | null;
   healthHistory: number[];
   trustHistory: number[];
+  /** Progressive disclosure: sources already inspected this incident. */
+  investigatedSources: string[];
+  /** Evidence unlocked via initial alert + investigations. */
+  revealedEvidence: RevealedEvidence[];
+  scenarioPhase: ScenarioPhase;
+  /** Prefer open-response UI when the difficulty allows it. */
+  openResponsePreferred: boolean;
+  /** Low-confidence open response awaiting clarification. */
+  pendingOpenResponse: PendingOpenResponse | null;
 }
 
 export interface AchievementDef {

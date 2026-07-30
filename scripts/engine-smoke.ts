@@ -1,11 +1,12 @@
 /**
- * Deterministic smoke test for the game engine. Run with: npx tsx scripts/engine-smoke.ts
- * Verifies: timeout resolution, game-over conditions, reducer guards
- * (duplicate actions are no-ops), and full-shift completion.
+ * Deterministic smoke test for the game engine and local response grader.
+ * Run with: npm run test:engine
  */
 import { DIFFICULTIES } from '../src/data/difficulty';
 import { INCIDENTS } from '../src/data/incidents';
+import { getIncidentBrief } from '../src/data/investigations';
 import { initialState, MAX_DRAIN_DT_SEC, reducer } from '../src/game/engine';
+import { defaultGrader, extractIntents } from '../src/game/grader';
 import type { GameState } from '../src/types';
 
 let failures = 0;
@@ -21,6 +22,17 @@ function assert(cond: boolean, label: string): void {
 const allIds = INCIDENTS.map((i) => i.id);
 let now = 1_000_000;
 
+function investigateOnce(state: GameState, clock: number): { state: GameState; now: number } {
+  const incidentId = state.queue[state.index];
+  const brief = getIncidentBrief(incidentId);
+  const source = brief.investigations[0];
+  const nextNow = clock + 10;
+  return {
+    state: reducer(state, { type: 'INVESTIGATE', sourceId: source.id, now: nextNow }),
+    now: nextNow,
+  };
+}
+
 // --- Scenario 1: every incident times out on senior → early game over ---
 console.log('Scenario 1: all timeouts on senior');
 let s: GameState = reducer(initialState('senior'), {
@@ -30,22 +42,23 @@ let s: GameState = reducer(initialState('senior'), {
   now,
 });
 assert(s.phase === 'incident', 'shift starts in incident phase');
+assert(s.revealedEvidence.length > 0, 'initial evidence is present');
+assert(s.scenarioPhase === 'triage', 'senior begins in triage');
 
 let guard = 0;
 while (s.phase !== 'over' && guard < 50) {
   guard += 1;
   if (s.phase === 'incident') {
-    // Tick until past the deadline (ticks every 250ms).
     let ticks = 0;
-    while (s.phase === 'incident' && ticks < 400) {
+    while (s.phase === 'incident' && ticks < 500) {
       now += 250;
       s = reducer(s, { type: 'TICK', now });
       ticks += 1;
     }
     assert(s.phase === 'result', `incident ${s.index + 1} timed out into a result`);
     assert(s.lastResult?.record.timedOut === true, 'result is marked as timed out');
+    assert(s.lastResult?.record.responseMode === 'timeout', 'timeout response mode recorded');
   } else if (s.phase === 'result') {
-    // Duplicate CHOOSE while in result phase must be a no-op.
     const before = s;
     s = reducer(s, { type: 'CHOOSE', actionId: 'anything', roll: 0.5, now });
     assert(s === before, 'CHOOSE during result phase is a no-op');
@@ -58,8 +71,8 @@ assert(s.gameOverReason !== null, `all-timeout shift ends early with a reason: "
 assert(s.metrics.health <= 0 || s.metrics.trust <= 0 || s.metrics.budget <= 0, 'a core metric hit zero');
 assert(s.records.length < 10, `ended after ${s.records.length}/10 incidents (early)`);
 
-// --- Scenario 2: always choose the first low-risk action → survive ---
-console.log('Scenario 2: deliberate play on engineer');
+// --- Scenario 2: investigate then choose carefully on engineer ---
+console.log('Scenario 2: investigate-then-act on engineer');
 now = 2_000_000;
 s = reducer(initialState('engineer'), {
   type: 'START',
@@ -71,6 +84,20 @@ guard = 0;
 while (s.phase !== 'over' && guard < 50) {
   guard += 1;
   if (s.phase === 'incident') {
+    const blocked = reducer(s, {
+      type: 'CHOOSE',
+      actionId: INCIDENTS.find((i) => i.id === s.queue[s.index])!.actions[0].id,
+      roll: 0.01,
+      now,
+    });
+    assert(blocked === s, 'CHOOSE before required investigation is a no-op');
+
+    const investigated = investigateOnce(s, now);
+    s = investigated.state;
+    now = investigated.now;
+    assert(s.investigatedSources.length >= 1, 'investigation recorded');
+    assert(s.scenarioPhase === 'ready', 'actions unlock after required investigation');
+
     now += 3000;
     s = reducer(s, { type: 'TICK', now });
     const incident = INCIDENTS.find((i) => i.id === s.queue[s.index])!;
@@ -79,6 +106,7 @@ while (s.phase !== 'over' && guard < 50) {
     )[0];
     s = reducer(s, { type: 'CHOOSE', actionId: best.id, roll: 0.01, now });
     assert(s.phase === 'result', 'choosing an action resolves to result');
+    assert(s.lastResult?.record.investigationsUsed >= 1, 'investigation count saved on record');
   } else {
     now += 2000;
     s = reducer(s, { type: 'CONTINUE', now });
@@ -103,7 +131,7 @@ s = reducer(initialState('junior'), {
   now,
 });
 now += 1000;
-s = reducer(s, { type: 'CHOOSE', actionId: 'scale-db', roll: 0.5, now }); // queues delayed effect
+s = reducer(s, { type: 'CHOOSE', actionId: 'scale-db', roll: 0.5, now });
 assert(s.pendingDelayed.length === 1, 'delayed consequence queued');
 now += 1000;
 s = reducer(s, { type: 'CONTINUE', now });
@@ -123,7 +151,7 @@ s = reducer(initialState('junior'), {
 });
 const healthBeforeJump = s.metrics.health;
 const trustBeforeJump = s.metrics.trust;
-now += 30_000; // simulate a 30s tab suspension between ticks
+now += 30_000;
 s = reducer(s, { type: 'TICK', now });
 const healthDrop = healthBeforeJump - s.metrics.health;
 const trustDrop = trustBeforeJump - s.metrics.trust;
@@ -134,12 +162,98 @@ const maxTrustDrop = incident.trustDrainPerSec * MAX_DRAIN_DT_SEC * mult + 0.000
 assert(healthDrop <= maxHealthDrop, `health drain capped after long gap (${healthDrop.toFixed(4)} <= ${maxHealthDrop.toFixed(4)})`);
 assert(trustDrop <= maxTrustDrop, `trust drain capped after long gap (${trustDrop.toFixed(4)} <= ${maxTrustDrop.toFixed(4)})`);
 assert(Math.abs(s.shiftElapsedSec - 30) < 0.001, 'wall-clock shift elapsed still advances by 30s');
-
-// Jump past the incident deadline in one tick — timeout must still apply.
 now = s.incidentDeadline! + 1;
 s = reducer(s, { type: 'TICK', now });
 assert(s.phase === 'result', 'absolute deadline still times out after a large jump');
 assert(s.lastResult?.record.timedOut === true, 'timeout after large jump is marked timed out');
+
+// --- Scenario 5: local open-response grader ---
+console.log('Scenario 5: local rubric grader');
+const vague = defaultGrader.grade('fix it', {
+  incidentId: 'failed-deploy',
+  investigatedSourceIds: [],
+  difficulty: 'senior',
+});
+assert(vague.needsClarification, 'vague response asks for clarification');
+assert(vague.confidence < 0.5, 'vague response has low confidence');
+
+const strong = defaultGrader.grade(
+  'Roll back the latest deployment and monitor error rates after the rollback.',
+  {
+    incidentId: 'failed-deploy',
+    investigatedSourceIds: ['deployments'],
+    difficulty: 'senior',
+  },
+);
+assert(!strong.needsClarification, 'clear rollback plan does not need clarification');
+assert(
+  strong.detected.some((d) => d.intent === 'rollback'),
+  'rollback intent detected',
+);
+assert(strong.quality === 'success', 'strong rollback plan grades as success');
+
+const risky = defaultGrader.grade('Restart everything.', {
+  incidentId: 'failed-deploy',
+  investigatedSourceIds: [],
+  difficulty: 'senior',
+});
+assert(
+  risky.detected.some((d) => d.intent === 'restart'),
+  'restart intent detected',
+);
+assert(risky.quality !== 'success', 'broad restart is not a success for failed deploy');
+
+const creds = defaultGrader.grade(
+  'Revoke and rotate the exposed credentials, preserve logs, then monitor CloudTrail.',
+  {
+    incidentId: 'credential-leak',
+    investigatedSourceIds: ['auth-logs'],
+    difficulty: 'senior',
+  },
+);
+assert(creds.quality === 'success', 'credential response covers required concepts');
+assert(extractIntents('enable waf challenge rules').some((i) => i.intent === 'waf_challenge'), 'waf synonym works');
+
+now = 5_000_000;
+s = reducer(initialState('senior'), {
+  type: 'START',
+  difficulty: 'senior',
+  queue: ['failed-deploy'],
+  now,
+  openResponsePreferred: true,
+});
+({ state: s, now } = investigateOnce(s, now));
+const grade = defaultGrader.grade(
+  'Roll back to the previous release and watch the error rate.',
+  {
+    incidentId: 'failed-deploy',
+    investigatedSourceIds: s.investigatedSources,
+    difficulty: 'senior',
+  },
+);
+s = reducer(s, { type: 'SUBMIT_OPEN', grade, now: now + 500 });
+assert(s.phase === 'result', 'open response can resolve an incident');
+assert(s.lastResult?.record.responseMode === 'open', 'open response mode recorded');
+
+const clarifyState = reducer(
+  reducer(initialState('senior'), {
+    type: 'START',
+    difficulty: 'senior',
+    queue: ['failed-deploy'],
+    now: 6_000_000,
+  }),
+  {
+    type: 'SUBMIT_OPEN',
+    grade: defaultGrader.grade('help', {
+      incidentId: 'failed-deploy',
+      investigatedSourceIds: [],
+      difficulty: 'senior',
+    }),
+    now: 6_000_100,
+  },
+);
+assert(clarifyState.phase === 'incident', 'low-confidence open response does not resolve yet');
+assert(clarifyState.pendingOpenResponse !== null, 'pending clarification stored');
 
 console.log(failures === 0 ? '\nALL ENGINE CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

@@ -222,7 +222,11 @@ export function PostmortemScreen({ game }: { game: Game }) {
       </div>
 
       <footer className="pm-actions">
-        <button type="button" className="btn btn-primary btn-lg" onClick={() => game.start(state.difficulty)}>
+        <button
+          type="button"
+          className="btn btn-primary btn-lg"
+          onClick={() => game.start(state.difficulty, state.openResponsePreferred)}
+        >
           <RotateCcw size={17} aria-hidden="true" />
           Restart Shift
         </button>

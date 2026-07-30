@@ -14,6 +14,7 @@ import {
   saveHighScore,
   saveSound,
 } from '../utils/storage';
+import { defaultGrader } from './grader';
 import { initialState, reducer, shuffle } from './engine';
 
 export interface Toast {
@@ -46,9 +47,6 @@ export function useGame() {
     });
   }, []);
 
-  // Game clock: runs while an incident is live (timer + drains) and during
-  // result review (infra settles back toward baseline). One interval, always
-  // cleaned up.
   const ticking = state.phase === 'incident' || state.phase === 'result';
   useEffect(() => {
     if (!ticking) return;
@@ -56,17 +54,51 @@ export function useGame() {
     return () => window.clearInterval(id);
   }, [ticking]);
 
-  const start = useCallback((difficulty: DifficultyId) => {
+  const start = useCallback((difficulty: DifficultyId, openResponsePreferred?: boolean) => {
     const config = DIFFICULTIES[difficulty];
     const queue = shuffle(INCIDENTS.map((i) => i.id)).slice(0, config.incidentCount);
     saveDifficulty(difficulty);
     setIsNewHighScore(false);
     sfx.click();
-    dispatch({ type: 'START', difficulty, queue, now: Date.now() });
+    dispatch({
+      type: 'START',
+      difficulty,
+      queue,
+      now: Date.now(),
+      openResponsePreferred: openResponsePreferred ?? config.allowOpenResponse,
+    });
+  }, []);
+
+  const investigate = useCallback((sourceId: string) => {
+    sfx.click();
+    dispatch({ type: 'INVESTIGATE', sourceId, now: Date.now() });
   }, []);
 
   const choose = useCallback((actionId: string) => {
     dispatch({ type: 'CHOOSE', actionId, roll: Math.random(), now: Date.now() });
+  }, []);
+
+  const submitOpenResponse = useCallback(
+    (text: string) => {
+      const incidentId = state.queue[state.index];
+      if (!incidentId) return;
+      const grade = defaultGrader.grade(text, {
+        incidentId,
+        investigatedSourceIds: state.investigatedSources,
+        difficulty: state.difficulty,
+      });
+      sfx.click();
+      dispatch({ type: 'SUBMIT_OPEN', grade, now: Date.now() });
+    },
+    [state.queue, state.index, state.investigatedSources, state.difficulty],
+  );
+
+  const clearOpenPending = useCallback(() => {
+    dispatch({ type: 'CLEAR_OPEN_PENDING' });
+  }, []);
+
+  const setOpenPreferred = useCallback((value: boolean) => {
+    dispatch({ type: 'SET_OPEN_PREFERRED', value });
   }, []);
 
   const continueShift = useCallback(() => {
@@ -79,11 +111,12 @@ export function useGame() {
     dispatch({ type: 'RESET' });
   }, []);
 
-  // Keyboard shortcuts: 1–4 pick an action, Enter/Space advances a result.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
       if (state.phase === 'incident') {
+        const config = DIFFICULTIES[state.difficulty];
+        if (state.investigatedSources.length < config.minInvestigationsBeforeActions) return;
         const num = Number.parseInt(event.key, 10);
         if (num >= 1 && num <= 4) {
           const incidentId = state.queue[state.index];
@@ -95,22 +128,28 @@ export function useGame() {
           }
         }
       } else if (state.phase === 'result' && event.key === 'Enter') {
-        // Let a focused button handle its own Enter press.
         if (document.activeElement instanceof HTMLButtonElement) return;
+        if (document.activeElement instanceof HTMLTextAreaElement) return;
         event.preventDefault();
         continueShift();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [state.phase, state.queue, state.index, choose, continueShift]);
+  }, [
+    state.phase,
+    state.queue,
+    state.index,
+    state.difficulty,
+    state.investigatedSources.length,
+    choose,
+    continueShift,
+  ]);
 
-  // Alert sound when a new incident opens.
   useEffect(() => {
     if (state.phase === 'incident') sfx.alert();
   }, [state.phase, state.index]);
 
-  // Outcome sound when a result lands.
   const lastResult = state.lastResult;
   useEffect(() => {
     if (!lastResult) return;
@@ -119,7 +158,6 @@ export function useGame() {
     else sfx.success();
   }, [lastResult]);
 
-  // Shift end: persist high score, play the end sting.
   useEffect(() => {
     if (state.phase !== 'over') return;
     if (state.gameOverReason) sfx.gameOver();
@@ -134,8 +172,6 @@ export function useGame() {
     });
   }, [state.phase, state.gameOverReason, state.score]);
 
-  // Achievements: evaluate per-decision checks after each resolution and
-  // shift-scoped checks when the shift ends.
   useEffect(() => {
     const scope: AchievementDef['scope'] | null =
       state.phase === 'result' ? 'decision' : state.phase === 'over' ? 'shift' : null;
@@ -167,7 +203,11 @@ export function useGame() {
     unlocked,
     toasts,
     start,
+    investigate,
     choose,
+    submitOpenResponse,
+    clearOpenPending,
+    setOpenPreferred,
     continueShift,
     goHome,
     toggleSound,

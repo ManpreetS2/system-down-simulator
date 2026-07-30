@@ -1,5 +1,7 @@
 import { DIFFICULTIES } from '../data/difficulty';
+import { getIncidentBrief } from '../data/investigations';
 import { getIncident } from '../data/incidents';
+import type { GradeResult } from './grader';
 import type {
   DecisionRecord,
   DelayedQueued,
@@ -11,6 +13,8 @@ import type {
   InfraState,
   Metrics,
   Outcome,
+  RevealedEvidence,
+  ScenarioPhase,
 } from '../types';
 
 export const INFRA_BASELINE: InfraState = {
@@ -31,9 +35,19 @@ export const INFRA_BASELINE: InfraState = {
 export const MAX_DRAIN_DT_SEC = 0.5;
 
 export type GameAction =
-  | { type: 'START'; difficulty: DifficultyId; queue: string[]; now: number }
+  | {
+      type: 'START';
+      difficulty: DifficultyId;
+      queue: string[];
+      now: number;
+      openResponsePreferred?: boolean;
+    }
   | { type: 'TICK'; now: number }
+  | { type: 'INVESTIGATE'; sourceId: string; now: number }
   | { type: 'CHOOSE'; actionId: string; roll: number; now: number }
+  | { type: 'SUBMIT_OPEN'; grade: GradeResult; now: number }
+  | { type: 'CLEAR_OPEN_PENDING' }
+  | { type: 'SET_OPEN_PREFERRED'; value: boolean }
   | { type: 'CONTINUE'; now: number }
   | { type: 'RESET' };
 
@@ -70,6 +84,45 @@ export function initialState(difficulty: DifficultyId): GameState {
     gameOverReason: null,
     healthHistory: [config.startHealth],
     trustHistory: [config.startTrust],
+    investigatedSources: [],
+    revealedEvidence: [],
+    scenarioPhase: 'triage',
+    openResponsePreferred: config.allowOpenResponse,
+    pendingOpenResponse: null,
+  };
+}
+
+function initialEvidenceFor(incidentId: string): RevealedEvidence[] {
+  const brief = getIncidentBrief(incidentId);
+  return brief.initialEvidence.map((e) => ({
+    id: e.id,
+    kind: e.kind,
+    text: e.text,
+    glossary: e.glossary,
+    sourceLabel: 'Initial alert',
+  }));
+}
+
+function scenarioPhaseFor(state: Pick<GameState, 'investigatedSources' | 'difficulty'>): ScenarioPhase {
+  const min = DIFFICULTIES[state.difficulty].minInvestigationsBeforeActions;
+  if (state.investigatedSources.length === 0) return 'triage';
+  if (state.investigatedSources.length < min) return 'investigating';
+  return 'ready';
+}
+
+function beginIncident(state: GameState, now: number): GameState {
+  const incidentId = state.queue[state.index];
+  const config = DIFFICULTIES[state.difficulty];
+  return {
+    ...state,
+    phase: 'incident',
+    investigatedSources: [],
+    revealedEvidence: incidentId ? initialEvidenceFor(incidentId) : [],
+    scenarioPhase: config.minInvestigationsBeforeActions > 0 ? 'triage' : 'ready',
+    pendingOpenResponse: null,
+    incidentStartedAt: now,
+    incidentDeadline: now + config.timerSec * 1000,
+    lastResult: null,
   };
 }
 
@@ -158,16 +211,34 @@ interface ResolveArgs {
   outcome: Outcome;
   timedOut: boolean;
   now: number;
+  responseMode: DecisionRecord['responseMode'];
+  actionLabelOverride?: string | null;
+  riskOverride?: IncidentAction['risk'] | null;
+  focusOverride?: IncidentAction['focus'] | null;
+  /** Extra remediation minutes for open responses without a mapped action. */
+  openTimeCostMin?: number;
 }
 
-function resolveIncident({ state, incident, action, outcome, timedOut, now }: ResolveArgs): GameState {
+function resolveIncident({
+  state,
+  incident,
+  action,
+  outcome,
+  timedOut,
+  now,
+  responseMode,
+  actionLabelOverride,
+  riskOverride,
+  focusOverride,
+  openTimeCostMin = 5,
+}: ResolveArgs): GameState {
   const config = DIFFICULTIES[state.difficulty];
   const scaled = scaleEffects(outcome.effects, config.consequenceMult);
 
-  // Slower remediations bleed more revenue while the fix is applied.
-  const timeLossRevenue = action
-    ? Math.round(action.timeCostMin * incident.revenueLossPerMin * config.consequenceMult)
-    : 0;
+  const remediationMin = action ? action.timeCostMin : responseMode === 'open' ? openTimeCostMin : 0;
+  const timeLossRevenue = Math.round(
+    remediationMin * incident.revenueLossPerMin * config.consequenceMult,
+  );
 
   let metrics = applyEffects(state.metrics, scaled);
   metrics = {
@@ -176,7 +247,6 @@ function resolveIncident({ state, incident, action, outcome, timedOut, now }: Re
     revenueLost: metrics.revenueLost + timeLossRevenue,
   };
 
-  // Delayed consequences queued by earlier decisions land now.
   const delayedLanded: DelayedQueued[] = [];
   let delayedScore = 0;
   for (const pending of state.pendingDelayed) {
@@ -199,9 +269,9 @@ function resolveIncident({ state, incident, action, outcome, timedOut, now }: Re
     incidentTitle: incident.title,
     severity: incident.severity,
     category: incident.category,
-    actionLabel: action?.label ?? null,
-    risk: action?.risk ?? null,
-    focus: action?.focus ?? null,
+    actionLabel: actionLabelOverride ?? action?.label ?? null,
+    risk: riskOverride ?? action?.risk ?? null,
+    focus: focusOverride ?? action?.focus ?? null,
     quality: outcome.quality,
     timedOut,
     score: outcome.score,
@@ -210,6 +280,8 @@ function resolveIncident({ state, incident, action, outcome, timedOut, now }: Re
     totalRevenueDelta: scaled.revenue - timeLossRevenue,
     effects: scaled,
     explanation: outcome.explanation,
+    responseMode,
+    investigationsUsed: state.investigatedSources.length,
   };
 
   const gameOverReason = gameOverReasonFor(metrics);
@@ -225,6 +297,7 @@ function resolveIncident({ state, incident, action, outcome, timedOut, now }: Re
     minTrust: Math.min(state.minTrust, metrics.trust),
     incidentStartedAt: null,
     incidentDeadline: null,
+    pendingOpenResponse: null,
     lastResult: {
       record,
       outcome,
@@ -248,14 +321,98 @@ export function reducer(state: GameState, action: GameAction): GameState {
   switch (action.type) {
     case 'START': {
       const fresh = initialState(action.difficulty);
-      return {
+      const started: GameState = {
         ...fresh,
-        phase: 'incident',
         queue: action.queue,
         shiftStartedAt: action.now,
-        incidentStartedAt: action.now,
-        incidentDeadline: action.now + DIFFICULTIES[action.difficulty].timerSec * 1000,
+        openResponsePreferred:
+          action.openResponsePreferred ?? DIFFICULTIES[action.difficulty].allowOpenResponse,
       };
+      return beginIncident(started, action.now);
+    }
+
+    case 'SET_OPEN_PREFERRED':
+      return { ...state, openResponsePreferred: action.value };
+
+    case 'CLEAR_OPEN_PENDING':
+      return { ...state, pendingOpenResponse: null };
+
+    case 'INVESTIGATE': {
+      if (state.phase !== 'incident') return state;
+      if (state.investigatedSources.includes(action.sourceId)) return state;
+      const incident = currentIncident(state);
+      if (!incident || state.incidentDeadline === null) return state;
+      const brief = getIncidentBrief(incident.id);
+      const source = brief.investigations.find((s) => s.id === action.sourceId);
+      if (!source) return state;
+
+      const revealed: RevealedEvidence[] = [
+        ...state.revealedEvidence,
+        ...source.findings.map((f) => ({
+          id: f.id,
+          kind: f.kind,
+          text: f.text,
+          glossary: f.glossary,
+          sourceLabel: source.label,
+        })),
+      ];
+      const investigatedSources = [...state.investigatedSources, source.id];
+      const nextDeadline = state.incidentDeadline - source.timeCostSec * 1000;
+
+      // Apply a small slice of unresolved drain for the investigation time spent.
+      const config = DIFFICULTIES[state.difficulty];
+      const dt = source.timeCostSec;
+      const mult = config.consequenceMult;
+      const revenueBleed = (incident.revenueLossPerMin / 60) * dt * mult;
+      const metrics: Metrics = {
+        ...state.metrics,
+        health: clamp(state.metrics.health - incident.healthDrainPerSec * dt * mult, 0, 100),
+        trust: clamp(state.metrics.trust - incident.trustDrainPerSec * dt * mult, 0, 100),
+        revenue: state.metrics.revenue - revenueBleed,
+        revenueLost: state.metrics.revenueLost + revenueBleed,
+      };
+
+      let infra = state.infra;
+      if (source.indicatorHints) {
+        infra = {
+          ...infra,
+          cpu: clamp(infra.cpu + (source.indicatorHints.cpu ?? 0), 1, 100),
+          memory: clamp(infra.memory + (source.indicatorHints.memory ?? 0), 1, 100),
+          dbLatency: Math.max(0, infra.dbLatency + (source.indicatorHints.dbLatency ?? 0)),
+          errorRate: Math.max(0, infra.errorRate + (source.indicatorHints.errorRate ?? 0)),
+          requestVolume: Math.max(4, infra.requestVolume + (source.indicatorHints.requestVolume ?? 0)),
+        };
+      }
+
+      const next: GameState = {
+        ...state,
+        investigatedSources,
+        revealedEvidence: revealed,
+        scenarioPhase: scenarioPhaseFor({
+          investigatedSources,
+          difficulty: state.difficulty,
+        }),
+        incidentDeadline: nextDeadline,
+        metrics,
+        minHealth: Math.min(state.minHealth, metrics.health),
+        minTrust: Math.min(state.minTrust, metrics.trust),
+        infra,
+        pendingOpenResponse: null,
+      };
+
+      // Investigation can itself exhaust the timer.
+      if (nextDeadline <= action.now || metrics.health <= 0 || metrics.trust <= 0) {
+        return resolveIncident({
+          state: next,
+          incident,
+          action: null,
+          outcome: incident.timeout,
+          timedOut: true,
+          now: action.now,
+          responseMode: 'timeout',
+        });
+      }
+      return next;
     }
 
     case 'TICK': {
@@ -318,6 +475,7 @@ export function reducer(state: GameState, action: GameAction): GameState {
           outcome: incident.timeout,
           timedOut: true,
           now: action.now,
+          responseMode: 'timeout',
         });
       }
 
@@ -330,6 +488,7 @@ export function reducer(state: GameState, action: GameAction): GameState {
           outcome: incident.timeout,
           timedOut: true,
           now: action.now,
+          responseMode: 'timeout',
         });
       }
 
@@ -340,6 +499,8 @@ export function reducer(state: GameState, action: GameAction): GameState {
       if (state.phase !== 'incident') return state;
       const incident = currentIncident(state);
       if (!incident) return state;
+      const config = DIFFICULTIES[state.difficulty];
+      if (state.investigatedSources.length < config.minInvestigationsBeforeActions) return state;
       const chosen = incident.actions.find((a) => a.id === action.actionId);
       if (!chosen) return state;
       const outcome =
@@ -351,6 +512,60 @@ export function reducer(state: GameState, action: GameAction): GameState {
         outcome,
         timedOut: false,
         now: action.now,
+        responseMode: 'choice',
+      });
+    }
+
+    case 'SUBMIT_OPEN': {
+      if (state.phase !== 'incident') return state;
+      const incident = currentIncident(state);
+      if (!incident) return state;
+      const config = DIFFICULTIES[state.difficulty];
+      if (!config.allowOpenResponse) return state;
+
+      const grade = action.grade;
+      if (grade.needsClarification) {
+        return {
+          ...state,
+          pendingOpenResponse: {
+            rawText: grade.rawText,
+            interpreted: grade.interpreted,
+            explanation: grade.explanation,
+            confidence: grade.confidence,
+            suggestedActionIds: grade.suggestedActionIds,
+            clarificationPrompt: grade.clarificationPrompt,
+          },
+        };
+      }
+
+      // Prefer mapping to a known action outcome when confidence is strong and a
+      // preferred action exists; otherwise use the rubric-produced effects.
+      let mapped: IncidentAction | null = null;
+      if (grade.suggestedActionIds[0] && grade.confidence >= 0.6 && grade.quality === 'success') {
+        mapped = incident.actions.find((a) => a.id === grade.suggestedActionIds[0]) ?? null;
+      }
+
+      const outcome: Outcome = mapped
+        ? mapped.success
+        : {
+            quality: grade.quality,
+            score: grade.score,
+            effects: grade.effects,
+            explanation: `${grade.interpreted} ${grade.explanation}`,
+          };
+
+      return resolveIncident({
+        state: { ...state, pendingOpenResponse: null },
+        incident,
+        action: mapped,
+        outcome,
+        timedOut: false,
+        now: action.now,
+        responseMode: 'open',
+        actionLabelOverride: mapped?.label ?? `Open response: ${grade.rawText.slice(0, 72)}`,
+        riskOverride: grade.risk,
+        focusOverride: grade.focus,
+        openTimeCostMin: mapped?.timeCostMin ?? 6,
       });
     }
 
@@ -362,8 +577,6 @@ export function reducer(state: GameState, action: GameAction): GameState {
         return { ...state, phase: 'over', shiftElapsedSec: (action.now - state.shiftStartedAt) / 1000 };
       }
 
-      // Between incidents the org stabilizes a little: partial recovery keeps
-      // one bad call from spiraling into an unwinnable shift.
       const metrics: Metrics = {
         ...state.metrics,
         health: clamp(state.metrics.health + config.recoveryHealth, 0, 100),
@@ -371,15 +584,14 @@ export function reducer(state: GameState, action: GameAction): GameState {
         budget: state.metrics.budget + config.budgetAccrual,
       };
 
-      return {
-        ...state,
-        phase: 'incident',
-        index: state.index + 1,
-        metrics,
-        lastResult: null,
-        incidentStartedAt: action.now,
-        incidentDeadline: action.now + config.timerSec * 1000,
-      };
+      return beginIncident(
+        {
+          ...state,
+          index: state.index + 1,
+          metrics,
+        },
+        action.now,
+      );
     }
 
     case 'RESET':

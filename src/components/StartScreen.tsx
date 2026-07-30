@@ -20,6 +20,8 @@ import { sfx } from '../utils/sound';
 export function StartScreen({ game }: { game: Game }) {
   const [difficulty, setDifficulty] = useState<DifficultyId>(game.state.difficulty);
   const [showHelp, setShowHelp] = useState(false);
+  const [openResponse, setOpenResponse] = useState(false);
+  const selected = DIFFICULTIES[difficulty];
 
   return (
     <main className="start">
@@ -35,9 +37,9 @@ export function StartScreen({ game }: { game: Game }) {
         <p className="start-tagline">An incident-response strategy game</p>
         <p className="start-desc">
           You are the on-call engineer. Production is about to break in creative ways — failed
-          deploys, database meltdowns, security leaks, vendor outages. Read the symptoms, pick a
-          response, and keep system health, customer trust, and the budget alive until the end of
-          your shift.
+          deploys, database meltdowns, security leaks, vendor outages. Investigate what you can
+          confirm, choose how to respond, and keep system health, customer trust, and the budget
+          alive until the end of your shift.
         </p>
       </header>
 
@@ -72,8 +74,31 @@ export function StartScreen({ game }: { game: Game }) {
           })}
         </div>
 
+        {selected.allowOpenResponse && (
+          <label className="open-response-toggle">
+            <input
+              type="checkbox"
+              checked={openResponse}
+              onChange={(e) => {
+                setOpenResponse(e.target.checked);
+                sfx.click();
+              }}
+            />
+            <span>
+              Prefer <strong>Open Response</strong> mode (type your plan; graded locally with a
+              structured rubric)
+            </span>
+          </label>
+        )}
+
         <div className="start-actions">
-          <button type="button" className="btn btn-primary btn-lg" onClick={() => game.start(difficulty)}>
+          <button
+            type="button"
+            className="btn btn-primary btn-lg"
+            onClick={() =>
+              game.start(difficulty, selected.allowOpenResponse ? openResponse : false)
+            }
+          >
             <Play size={18} aria-hidden="true" />
             Start Shift
           </button>
@@ -120,21 +145,21 @@ export function StartScreen({ game }: { game: Game }) {
           <div id="howto-body" className="howto">
             <ol>
               <li>
-                Incidents page you one at a time. Each has a countdown — while it runs, the company
-                bleeds revenue and system health degrades.
+                Incidents start lean: alert, customer impact, a few key indicators, and confirmed
+                evidence. A countdown runs while revenue and health drain.
               </li>
               <li>
-                Read the alert and symptoms, then choose one of four responses. Risk labels are
-                honest: high-risk moves are faster but can backfire badly.
+                Investigate sources (logs, deploys, metrics, status pages) to reveal confirmed facts,
+                indicators, and assumptions — investigation spends response time.
               </li>
               <li>
-                After each decision you get the outcome, the metric impact, and what an experienced
-                responder would have done. Some choices have delayed consequences.
+                Junior keeps multiple-choice unlocked with glossary tips. Engineer and Senior require
+                investigation before remediation. Senior can also type an open response graded by a
+                local rubric.
               </li>
               <li>
-                The shift ends early if <strong>system health</strong>, <strong>customer trust</strong>,
-                or the <strong>engineering budget</strong> hits zero. Survive every incident to reach
-                the postmortem and your grade.
+                After you act, you see the outcome, metric impact, and what an experienced responder
+                might do. The shift ends early if health, trust, or budget hits zero.
               </li>
             </ol>
             <p className="howto-keys">

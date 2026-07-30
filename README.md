@@ -47,21 +47,29 @@ The game is designed to be understandable to nontechnical players while still us
 ## Gameplay Flow
 
 1. Select a difficulty and start your shift.
-2. Read the alert and symptoms for the active incident.
-3. Choose one of four responses before the timer expires.
-4. Review the outcome: metric changes, score impact, and an engineering explanation.
-5. Continue through the remaining incidents.
-6. Read your end-of-shift postmortem and try to beat your high score.
+2. Read a lean triage view: alert, customer impact, a few key indicators, and confirmed evidence.
+3. Investigate sources (deployments, logs, metrics, status pages, and more) to unlock deeper evidence — investigation spends response time.
+4. Remediate with multiple-choice actions (always available on Junior; unlocked after investigation on Engineer/Senior), or type an open response on Senior.
+5. Review the outcome only after you decide: metric changes, score impact, and an engineering explanation.
+6. Continue through the remaining incidents and read your end-of-shift postmortem.
 
 If the timer runs out with no response, a failure consequence is applied automatically. One poor decision is rarely fatal — recovery between incidents is intentional — but health, trust, or budget at zero ends the shift early.
 
+### Progressive disclosure
+
+Incidents do not dump every symptom and consequence up front. Evidence is labeled as **Confirmed**, **Indicator**, **Assumption**, or **Unknown** so players can separate facts from guesses. Junior difficulty adds short glossary tips; Engineer and Senior withhold remediation choices until some investigation is done.
+
+### Open response (Senior)
+
+Senior can optionally type a free-form plan (for example: “Roll back the latest deployment and verify error rates”). Responses are graded in-browser by a deterministic `LocalRubricGrader` using per-incident concept rubrics and synonym-aware intent extraction. Vague answers ask for clarification instead of pretending to understand. A `RemoteLLMGrader` adapter exists for a future server-hosted evaluator, but the public app intentionally stays local, private, free, and testable — no API keys or paid services.
+
 ### Difficulty Levels
 
-| Difficulty | Shift length | Timer | Pressure |
+| Difficulty | Shift length | Investigation | Response style |
 | --- | --- | --- | --- |
-| Junior | 6 incidents | Longer | Softer consequences, more starting budget |
-| Engineer | 8 incidents | Balanced | Default balance |
-| Senior | 10 incidents | Shorter | Harsher consequences, tighter resources |
+| Junior | 6 incidents | Optional, highlighted hints + glossary | Multiple choice with risk labels |
+| Engineer | 8 incidents | Required before acting | Multiple choice after evidence gathering |
+| Senior | 10 incidents | Required, minimal briefing | Multiple choice and optional open response |
 
 ### Keyboard Controls
 
@@ -91,20 +99,21 @@ There is no server, database, authentication, or third-party API dependency.
 
 ```
 src/
-  data/           # Incidents, difficulty configs, achievements
-  game/           # Reducer engine, report/grading, React hook
-  components/     # Start screen, dashboard, result, postmortem
+  data/           # Incidents, briefs, rubrics, difficulty, achievements
+  game/           # Reducer engine, report helpers, React hook
+  game/grader/    # ResponseGrader interface + LocalRubricGrader
+  components/     # Start screen, progressive incident panel, postmortem
   utils/          # Formatting, localStorage, synthesized sound
   types.ts        # Shared TypeScript models
   index.css       # Design system and responsive layout
 scripts/
-  engine-smoke.ts # Deterministic engine checks
+  engine-smoke.ts # Engine + grader deterministic checks
 .github/workflows/
   ci.yml          # Typecheck, engine test, production build
   deploy-pages.yml# GitHub Pages deployment
 ```
 
-Gameplay content stays in data files. Components render state; the reducer in `src/game/engine.ts` owns timers, metric drains, resolution, delayed consequences, and win/lose conditions.
+Gameplay content stays in data files. Components render state; the reducer in `src/game/engine.ts` owns timers, investigation, open-response submission, metric drains, resolution, delayed consequences, and win/lose conditions.
 
 ## Installation
 

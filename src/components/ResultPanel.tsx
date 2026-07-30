@@ -26,6 +26,14 @@ export function ResultPanel({ result, game }: { result: ResolvedResult; game: Ga
   const { record, outcome, incident, action } = result;
   const { state } = game;
 
+  const actionSub = record.actionLabel ?? action?.label ?? '';
+  const modeNote =
+    record.responseMode === 'open'
+      ? 'Open response'
+      : record.investigationsUsed > 0
+        ? `${record.investigationsUsed} investigation${record.investigationsUsed === 1 ? '' : 's'}`
+        : null;
+
   const banner = record.timedOut
     ? {
         tone: 'bad',
@@ -38,20 +46,20 @@ export function ResultPanel({ result, game }: { result: ResolvedResult; game: Ga
           tone: 'ok',
           icon: <CheckCircle2 size={20} aria-hidden="true" />,
           title: 'Incident resolved',
-          sub: action?.label ?? '',
+          sub: [actionSub, modeNote].filter(Boolean).join(' · '),
         }
       : outcome.quality === 'partial'
         ? {
             tone: 'warn',
             icon: <HelpCircle size={20} aria-hidden="true" />,
             title: 'Partial success',
-            sub: action?.label ?? '',
+            sub: [actionSub, modeNote].filter(Boolean).join(' · '),
           }
         : {
             tone: 'bad',
             icon: <XCircle size={20} aria-hidden="true" />,
             title: 'The decision backfired',
-            sub: action?.label ?? '',
+            sub: [actionSub, modeNote].filter(Boolean).join(' · '),
           };
 
   const isLast = state.gameOverReason !== null || state.index + 1 >= state.queue.length;
