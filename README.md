@@ -137,30 +137,6 @@ scripts/
 
 Gameplay content stays in data files. Components render state; the reducer in `src/game/engine.ts` owns timers, metric drains, resolution, delayed consequences, and win/lose conditions. That separation made balancing and adding incidents much easier than burying outcomes inside UI code.
 
-## Screenshots
-
-> Add screenshots after you capture them from a local or deployed run.
-
-| Screen | File |
-| --- | --- |
-| Start screen | `docs/screenshots/start.png` |
-| Active incident dashboard | `docs/screenshots/dashboard.png` |
-| Decision result | `docs/screenshots/result.png` |
-| End-of-shift postmortem | `docs/screenshots/postmortem.png` |
-
-Place images under `docs/screenshots/` and they will render here:
-
-```markdown
-![Start screen](docs/screenshots/start.png)
-![Operations dashboard](docs/screenshots/dashboard.png)
-![Result panel](docs/screenshots/result.png)
-![Postmortem](docs/screenshots/postmortem.png)
-```
-
-## Live Demo
-
-_Coming soon._ After deploying (for example with GitHub Pages, Netlify, or Vercel), replace this section with the public URL.
-
 ## What I Learned
 
 - Modeling a full game loop as a single reducer with explicit phases (`idle` → `incident` → `result` → `over`) keeps timing, scoring, and UI state consistent
